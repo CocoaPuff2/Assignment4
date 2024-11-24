@@ -32,6 +32,7 @@ public class AudioPlayerGUI extends JFrame {
                 String selectedFile = fileList.getSelectedValue();
                 if (selectedFile != null) {
                     playAudio("audio/" + selectedFile);
+                    extractFeatures("audio/" + selectedFile);  // Extract features on play
                 } else {
                     JOptionPane.showMessageDialog(null, "Please select an audio file.");
                 }
@@ -97,6 +98,58 @@ public class AudioPlayerGUI extends JFrame {
             currentClip.stop();
             currentClip.close();
             stopButton.setEnabled(false);  // Disable the Stop button after stopping the audio
+        }
+    }
+
+    private void extractFeatures(String filePath) {
+        try {
+            File audioFile = new File(filePath);
+            AudioInputStream audioStream = AudioSystem.getAudioInputStream(audioFile);
+            AudioFormat format = audioStream.getFormat();
+            int sampleRate = (int) format.getSampleRate();
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+            double rms = 0.0;
+            int zeroCrossings = 0;
+            int previousSample = 0;
+            double maxAmplitude = 0.0;
+            int totalSamples = 0; // To track number of samples
+
+            // Process audio samples and extract features
+            while ((bytesRead = audioStream.read(buffer)) != -1) {
+                for (int i = 0; i < bytesRead; i++) {
+                    int sample = buffer[i];
+
+                    // Amplitude (Max absolute value)
+                    maxAmplitude = Math.max(maxAmplitude, Math.abs(sample));
+
+                    // RMS Energy
+                    rms += Math.pow(sample, 2);
+                    totalSamples++; // counts number of samples
+
+                    // Zero-Crossing Rate
+                    if ((previousSample > 0 && sample <= 0) || (previousSample < 0 && sample >= 0)) {
+                        zeroCrossings++;
+                    }
+                    previousSample = sample;
+                }
+            }
+
+            // Calculate RMS value
+            if (totalSamples > 0) {
+                rms = Math.sqrt(rms / totalSamples);
+            } else {
+                rms = 0.0;
+            }
+
+            System.out.println("Features for " + filePath + ":");
+            System.out.println("Max Amplitude: " + maxAmplitude);
+            System.out.println("RMS Energy: " + rms);
+            System.out.println("Zero-Crossing Rate: " + zeroCrossings);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Error extracting features.");
         }
     }
 
