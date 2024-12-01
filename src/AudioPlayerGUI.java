@@ -1,8 +1,13 @@
+package src;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.*;
+import java.util.ArrayList;
 import javax.sound.sampled.*;
+import org.apache.commons.math4.transform.*;
+import org.jtransforms.fft.DoubleFFT_1D;
 
 public class AudioPlayerGUI extends JFrame {
     private JList<String> fileList;
@@ -104,6 +109,13 @@ public class AudioPlayerGUI extends JFrame {
         }
     }
 
+    // The three fast fourier transformation features are:
+    /*
+   1.  Spectral Centroid: Measures the "center of mass" of the spectrum.
+   2.  Spectral Bandwidth: Measures the width of the spectrum.
+   3.  Spectral Roll Off: Measures the point where a certain percentage of the
+       total spectral energy is contained.
+     */
     private void extractFeatures(String filePath, String label) {
         try {
             File audioFile = new File(filePath);
@@ -117,6 +129,7 @@ public class AudioPlayerGUI extends JFrame {
             int previousSample = 0;
             double maxAmplitude = 0.0;
             int totalSamples = 0; // To track number of samples
+            ArrayList<Double> audioData = new ArrayList<>(); // To store the audio data for FFT
 
             // Check if audio is 16-bit or 8-bit
             boolean is16Bit = format.getSampleSizeInBits() == 16;
@@ -157,11 +170,39 @@ public class AudioPlayerGUI extends JFrame {
                 rms = 0.0;
             }
 
+            /*
+            // Fast Fourier Transformations:
+            // Convert audio data list to array for FFT
+            double[] audioArray = audioData.stream().mapToDouble(Double::doubleValue).toArray();
+
+            // FFT to extract the frequency-domain features
+            DoubleFFT_1D fft = new DoubleFFT_1D(audioArray.length);
+            fft.realForward(audioArray);
+            //FastFourierTransformer transformer = new FastFourierTransformer(TransformType.FORWARD);
+            // Complex[] fftResult = transformer.transform(audioArray);
+
+            // Extract spectral features
+            double spectralCentroid = calculateSpectralCentroid(audioArray);
+            double spectralBandwidth = calculateSpectralBandwidth(audioArray, spectralCentroid);
+            double spectralRolloff = calculateSpectralRolloff(audioArray, 0.85);  // 85% rolloff point
+            /*
+            double spectralCentroid = calculateSpectralCentroid(fftResult);
+            double spectralBandwidth = calculateSpectralBandwidth(fftResult, spectralCentroid);
+            double spectralRolloff = calculateSpectralRolloff(fftResult, 0.85);  // 85% rolloff point
+
+             */
+
             // Print extracted features for debugging
             System.out.println("Features for " + filePath + ":");
             System.out.println("Max Amplitude: " + maxAmplitude);
             System.out.println("RMS Energy: " + rms);
             System.out.println("Zero-Crossing Rate: " + zeroCrossings);
+            /*
+            System.out.println("Spectral Centroid: " + spectralCentroid);
+            System.out.println("Spectral Bandwidth: " + spectralBandwidth);
+            System.out.println("Spectral Rolloff: " + spectralRolloff);
+
+             */
 
             // Save features to CSV
             saveFeaturesToCSV(maxAmplitude, rms, zeroCrossings, label);
@@ -173,6 +214,63 @@ public class AudioPlayerGUI extends JFrame {
             e.printStackTrace();
             JOptionPane.showMessageDialog(this, "Error extracting features.");
         }
+    }
+
+    // Measures the spread of the spectrum around the centroid.
+    private double calculateSpectralBandwidth(double[] spectrum, double centroid) {
+        double sum = 0.0; // accumulate the weighted squared distances from the centroid.
+        double totalMagnitude = 0.0; // of the spectrum
+
+        // Iterate through the first half of the spectrum (FFT is symmetrical)
+        for (int i = 0; i < spectrum.length / 2; i++) {
+            double magnitude = Math.abs(spectrum[i]); // at current freq bin
+            sum += magnitude * Math.pow(i - centroid, 2);
+            totalMagnitude += magnitude;
+        }
+
+        // calc spectral bandwidth
+        return totalMagnitude > 0 ? Math.sqrt(sum / totalMagnitude) : 0.0;
+    }
+
+    private double calculateSpectralRolloff(double[] spectrum, double rolloffPercentage) {
+        double totalEnergy = 0.0;
+        //  Calculate the total energy of the first half of the spectrum.
+        for (int i = 0; i < spectrum.length / 2; i++) {
+            totalEnergy += Math.abs(spectrum[i]);
+        }
+
+        double threshold = totalEnergy * rolloffPercentage; // energy threshold for the rolloff point
+        double cumulativeEnergy = 0.0; // track the cumulative energy as we iterate through the spectrum.
+
+        // iterate through first half of the spectrum
+        for (int i = 0; i < spectrum.length / 2; i++) {
+            cumulativeEnergy += Math.abs(spectrum[i]);
+
+            // If cumulative energy meets or exceeds the threshold, return the current frequency bin index.
+            if (cumulativeEnergy >= threshold) {
+                return i; // Frequency bin
+            }
+        }
+
+        return spectrum.length / 2 - 1; // Default to highest frequency bin if not reached
+    }
+
+
+    // Measures the "center of mass" of the spectrum.
+    private double calculateSpectralCentroid(double[] spectrum) {
+        double weightedSum = 0.0; //weighted sum of frequency magnitudes.
+        double totalMagnitude = 0.0; // total magnitude of the spectrum.
+
+        // iterates through the first half of the spectrum, since FFT output is symmetrical,
+        // only need the FIRST HALF for spectral features.
+        for (int i = 0; i < spectrum.length / 2; i++) { // Only half due to symmetry in FFT
+            double magnitude = Math.abs(spectrum[i]); // at the current frequency bin.
+            weightedSum += i * magnitude;
+            totalMagnitude += magnitude;
+        }
+
+        // calc spectral centroid
+        return totalMagnitude > 0 ? weightedSum / totalMagnitude : 0.0;
     }
 
     // Method to save the features to CSV
