@@ -4,16 +4,27 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.*;
-import java.util.ArrayList;
+import java.util.*;
 import javax.sound.sampled.*;
 import org.apache.commons.math4.transform.*;
 import org.jtransforms.fft.DoubleFFT_1D;
+import weka.classifiers.Classifier;
+import weka.classifiers.trees.J48;  // You can choose other classifiers from WEKA
+import weka.core.DenseInstance;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.converters.ConverterUtils.DataSource;
 
 public class AudioPlayerGUI extends JFrame {
     private JList<String> fileList;
     private DefaultListModel<String> listModel;
     private JButton playButton, stopButton;
     private Clip currentClip;
+
+    // for the ML file organization
+    private ArrayList<String> allFiles = new ArrayList<>();
+    private ArrayList<String> trainingFiles = new ArrayList<>();
+    private ArrayList<String> testingFiles = new ArrayList<>();
 
     public AudioPlayerGUI() {
         // Set up JFrame
@@ -62,6 +73,8 @@ public class AudioPlayerGUI extends JFrame {
 
         // Load audio files into the list model
         loadAudioFiles();
+        // split the data files for testing and training
+        splitdata();
 
         // Clear CSV and ARFF files on start
         clearFiles();
@@ -85,6 +98,18 @@ public class AudioPlayerGUI extends JFrame {
                 listModel.addElement("speech/" + file.getName());
             }
         }
+    }
+
+    private void splitdata() {
+        // Shuffles the list of files to ensure randomness
+        Collections.shuffle(allFiles);
+
+        // First 2/3 used for training
+        int trainSize = (int) (allFiles.size() * 0.67);
+        trainingFiles = new ArrayList<>(allFiles.subList(0, trainSize));
+
+// Remaining 1/3 for testing
+        testingFiles = new ArrayList<>(allFiles.subList(trainSize, allFiles.size()));
     }
 
     private void playAudio(String filePath) {
@@ -287,6 +312,88 @@ public class AudioPlayerGUI extends JFrame {
         }
     }
 
+    // Method to train the model using WEKA
+    private void trainModel() {
+        try {
+            // Convert CSV to ARFF after saving the features
+            convertCsvToArff("features.csv", "features.arff");
+
+            // Load the ARFF file into WEKA
+            DataSource source = new DataSource("features.arff");
+            Instances data = source.getDataSet();
+            // Set the class index to the last attribute (label)
+            data.setClassIndex(data.numAttributes() - 1);
+
+            // Train a classifier
+            Classifier classifier = new J48();  // J48 is a decision tree classifier (you can use other classifiers)
+            classifier.buildClassifier(data);
+
+            // Save the classifier model
+            weka.core.SerializationHelper.write("music_model.model", classifier);
+            System.out.println("Model trained and saved.");
+
+            // Test the model with the testing data
+            testModel(classifier);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    // Method to test the model using WEKA
+    private void testModel(Classifier classifier) {
+        try {
+            // Load the ARFF file
+            DataSource source = new DataSource("features.arff");
+            Instances data = source.getDataSet();
+            data.setClassIndex(data.numAttributes() - 1);
+
+            // header for the results
+            System.out.println("#, Model Output, Ground Truth Label");
+
+            // For testing, use the testing files
+            for (String filePath : testingFiles) {
+                // Extract features for the testing file (extract and test each file individually)
+                double maxAmplitude = 0.0;
+                double rms = 0.0;
+                int zeroCrossings = 0;
+                String label = filePath.startsWith("music/") ? "1" : "0"; // Label for the file (1 for music, 0 for speech)
+
+                // extract features of the current file
+                extractFeatures(filePath, label);
+                
+                // Create a new instance for the test file using the extracted features
+                Instance testInstance = createTestInstance(maxAmplitude, rms, zeroCrossings, label, data);
+
+                // Classify the instance using the trained classifier
+                double prediction = classifier.classifyInstance(testInstance);
+
+                // Output the prediction result
+                String predictedClass = (prediction == 1.0) ? "Music" : "Speech"; // 1 = music, 0 = speech
+                System.out.println("File: " + filePath + " | Predicted: " + predictedClass);
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private Instance createTestInstance(double maxAmplitude, double rms, int zeroCrossings, String label, Instances data) {
+        // Create a new instance with the same number of attributes as the training data
+        Instance instance = new DenseInstance(4);  // 4 attributes: maxAmplitude, rms, zeroCrossings, and label
+
+        // Set the attribute values for the instance
+        instance.setValue(0, maxAmplitude);        // Set amplitude value
+        instance.setValue(1, rms);                 // Set RMS value
+        instance.setValue(2, zeroCrossings);       // Set zero-crossing rate value
+        instance.setValue(3, label.equals("1") ? 1.0 : 0.0);  // Set class label (1 for music, 0 for speech)
+
+        // Set the instance's dataset (this is needed for classification)
+        instance.setDataset(data);
+
+        return instance;
+    }
+
     // Method to convert CSV to ARFF
     private void convertCsvToArff(String csvFile, String arffFile) {
         try (BufferedReader br = new BufferedReader(new FileReader(csvFile));
@@ -339,6 +446,7 @@ public class AudioPlayerGUI extends JFrame {
             public void run() {
                 AudioPlayerGUI gui = new AudioPlayerGUI();
                 gui.setVisible(true);
+                // gui.trainModel();
             }
         });
     }
